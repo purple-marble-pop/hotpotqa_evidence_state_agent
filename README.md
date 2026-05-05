@@ -2,7 +2,7 @@
 
 本项目是一个面向 HotpotQA 的 **证据状态驱动多跳推理 Agent**。
 
-它不是简单的一次性 RAG，也不是直接复现 ReAct 或 IRCoT，而是借鉴：
+参考：
 
 - ReAct 的 `Thought → Action → Observation → Finish` 智能体循环；
 - IRCoT 的“检索与推理交错进行”思想；
@@ -10,7 +10,7 @@
 
 构建一个能够在多跳问答中维护 `known_facts`、`evidence_chain`、`missing_information` 和 `agent_trace` 的轻量级 Agent 框架。
 
-## System Diagram
+## 系统框架
 
 <img src="assets/system_architecture.png" alt="" width="100%">
 
