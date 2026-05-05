@@ -12,8 +12,7 @@
 
 ## System Diagram
 
-![HotpotQA Evidence-State Agent system diagram](assets/system_architecture.png)
-
+<img src="assets/system_architecture.png" alt="" width="100%">
 
 ## 项目目标
 
