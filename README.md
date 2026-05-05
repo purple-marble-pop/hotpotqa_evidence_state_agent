@@ -245,3 +245,30 @@ Agent trace:
 Final answer:
 James Hetfield, Lars Ulrich, Kirk Hammett, and Robert Trujillo
 ```
+
+## 评测指标
+
+可以用下面的命令在 HotpotQA 的一小段样本上批量评测：
+
+```bash
+python -m hotpotqa_agent.evaluation.evaluate_agent --split train --sample-index 0 --sample-count 20 --max-hops 4 --hf-cache-dir <drive:>/hf_cache/hotpotqa --offline
+```
+
+以下结果基于 HotpotQA `train` split 的前 20 条样本计算得到，其中包含 18 条 bridge 问题和 2 条 comparison 问题。该结果主要用于小规模 sanity check，不代表官方排行榜成绩。
+
+| 指标 | 结果 | 含义 |
+|---|---:|---|
+| `count` | 20 | 参与评测的样本数量。 |
+| `answer_em` | 0.6000 | 预测答案与标准答案完全匹配的比例，经过大小写、标点和冠词归一化。 |
+| `answer_f1` | 0.7643 | 预测答案与标准答案之间的 token-level F1。 |
+| `answer_rate` | 0.9500 | Agent 输出非空答案的比例。 |
+| `support_precision` | 0.1853 | Agent 检索到的证据中，有多少比例属于标准 supporting facts。 |
+| `support_recall` | 0.7092 | 标准 supporting facts 中，有多少比例被 Agent 检索到。 |
+| `support_f1` | 0.2823 | Supporting facts 检索的 Precision / Recall 综合 F1。 |
+| `avg_hops` | 1.9000 | Agent 平均推理跳数。 |
+
+逐样本评测结果会保存为 JSONL：
+
+```text
+outputs/eval_agent.jsonl
+```
