@@ -248,13 +248,11 @@ James Hetfield, Lars Ulrich, Kirk Hammett, and Robert Trujillo
 
 ## 评测指标
 
-可以用下面的命令在 HotpotQA 的一小段样本上批量评测：
-
 ```bash
 python -m hotpotqa_agent.evaluation.evaluate_agent --split train --sample-index 0 --sample-count 20 --max-hops 4 --hf-cache-dir <drive:>/hf_cache/hotpotqa --offline
 ```
 
-以下结果基于 HotpotQA `train` split 的前 20 条样本计算得到，其中包含 18 条 bridge 问题和 2 条 comparison 问题。该结果主要用于小规模 sanity check，不代表官方排行榜成绩。
+以下结果基于 HotpotQA `train` split 的前 20 条样本计算得到，其中包含 18 条 bridge 问题和 2 条 comparison 问题。
 
 | 指标 | 结果 | 含义 |
 |---|---:|---|

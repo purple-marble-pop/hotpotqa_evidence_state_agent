@@ -1,7 +1,7 @@
 import os
 from datasets import load_dataset
 
-from hotpotqa_agent.agent.llm import ensure_valid_ssl_cert_env
+from hotpotqa_agent.core.llm import ensure_valid_ssl_cert_env
 
 
 def load_hotpotqa(split="validation", name="distractor", hf_cache_dir=None, offline=False):
