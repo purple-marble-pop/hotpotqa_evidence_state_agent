@@ -1,4 +1,4 @@
-# HotpotQA Attribute-Constrained Hybrid Agent
+# 多属性约束驱动的多跳推理agent
 
 本项目面向 HotpotQA 多跳问答任务，包含原始 Evidence-State baseline agent，以及一个改进后的 Attribute-Constrained Hybrid Agent。
 
