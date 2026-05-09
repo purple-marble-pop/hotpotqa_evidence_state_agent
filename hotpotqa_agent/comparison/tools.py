@@ -22,8 +22,10 @@ Return ONLY valid JSON:
 
 COMPARE_SYSTEM = """You compare two extracted entity values and choose the final answer.
 
-Use the answer_rule and comparison_type. Return one of the entity names as the answer unless the
-question requires a value.
+Use the answer_rule and comparison_type.
+For yes/no or boolean questions, return exactly "yes" or "no".
+For common-value questions, return the shared value, not an entity name.
+Return one of the entity names only when the question asks which entity satisfies a condition.
 
 Return ONLY valid JSON:
 {
@@ -91,7 +93,36 @@ class ComparisonTools:
                 f"Entity B value: {schema.entity_b_value}\n"
             ),
         )
-        schema.final_answer = str(result.get("answer", "")).strip()
+        schema.final_answer = self._normalize_boolean_answer(
+            schema,
+            str(result.get("answer", "")).strip(),
+        )
         schema.reason = str(result.get("reason", "")).strip()
         schema.state = ComparisonState.COMPARED
         return schema
+
+    def _normalize_boolean_answer(self, schema: ComparisonSchema, answer: str) -> str:
+        if schema.comparison_type != "boolean_attribute":
+            return answer
+        rule = schema.answer_rule.lower()
+        boolean_rule = any(
+            marker in rule
+            for marker in (
+                "both",
+                "same",
+                "return true",
+                "return false",
+                "answer yes",
+                "yes",
+                "no",
+            )
+        )
+        if not boolean_rule:
+            return answer
+        a_value = (schema.entity_a_value.value if schema.entity_a_value else "").lower()
+        b_value = (schema.entity_b_value.value if schema.entity_b_value else "").lower()
+        if a_value in {"true", "false"} and b_value in {"true", "false"}:
+            return "yes" if a_value == "true" and b_value == "true" else "no"
+        if answer.lower() in {"yes", "no"}:
+            return answer.lower()
+        return answer

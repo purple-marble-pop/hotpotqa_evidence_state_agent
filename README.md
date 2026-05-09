@@ -1,79 +1,172 @@
-# HotpotQA Evidence-State Multi-Hop Agent
+# HotpotQA Logic-Chain Hybrid Agent
 
-本项目是一个面向 HotpotQA 的 **证据状态驱动多跳推理 Agent**。
+本项目面向 HotpotQA 多跳问答任务，包含一个原始 baseline agent，以及一个改进后的逻辑链导向 hybrid agent。
 
-参考：
+项目的核心问题是：HotpotQA 的答案往往不能从单个句子直接得到，而需要沿着中间实体、属性约束和关系链逐步推理。原始方法更像是在检索结果中不断更新证据状态；改进方法则尝试显式构建推理逻辑链中的连接点，并围绕这些连接点进行检索、验证和推进。
 
-- ReAct 的 `Thought → Action → Observation → Finish` 智能体循环；
-- IRCoT 的“检索与推理交错进行”思想；
-- HotpotQA 自身的 `context` 与 `supporting_facts` 证据结构；
+## 总体思想
 
-构建一个能够在多跳问答中维护 `known_facts`、`evidence_chain`、`missing_information` 和 `agent_trace` 的轻量级 Agent 框架。
+### Baseline: 证据状态驱动
 
-## 系统框架
-
-<img src="assets/system_architecture.png" alt="" width="100%">
-
-## 项目目标
-
-给定一条 HotpotQA 样本：
+原始 `hotpotqa_agent/agent` 是一个 Evidence-State Agent。它参考 ReAct 和 IRCoT 的思想，在每一跳中交错执行：
 
 ```text
-question + context pages
+Thought -> Action -> Observation -> State Update -> Finish
 ```
 
-Agent 需要：
+它维护：
 
-1. 根据问题判断当前缺失的信息；
-2. 在候选 context 页面中执行 Search / Lookup；
-3. 从观察结果中抽取中间事实；
-4. 更新结构化 reasoning state；
-5. 判断证据是否充分；
-6. 若充分则 Finish，否则继续下一跳；
-7. 输出最终答案、证据链和每一跳轨迹。
+- `known_facts`
+- `evidence_chain`
+- `missing_information`
+- `agent_trace`
 
-## 项目结构
+这种方式的优点是直接、灵活，通常能较快得到答案。它更偏向 answer-oriented，即围绕当前缺失信息不断检索和归纳，直到模型认为可以回答。
+
+### Proposed: 逻辑链连接点驱动
+
+改进后的方法不直接把第一个检索结果当作下一跳，而是先分析问题中的逻辑结构，显式规划推理链中的连接点。
+
+可以把多跳问题理解成一条逻辑链：
 
 ```text
-hotpotqa_evidence_state_agent/
-├── hotpotqa_agent/
-│   ├── data/
-│   │   ├── load_hotpotqa.py
-│   │   ├── explore_dataset.py
-│   │   └── export_evidence.py
-│   └── agent/
-│       ├── state.py
-│       ├── tools.py
-│       ├── llm.py
-│       ├── planner.py
-│       ├── interpreter.py
-│       └── hotpot_agent.py
-├── examples/
-│   └── run_sample_agent.py
-├── requirements.txt
-├── .env.example
-└── DESIGN.md
+起点实体/条件 -> 中间连接点 -> 下一跳关系 -> 最终答案
 ```
 
-## 环境准备
+其中，中间连接点不是随便检索到的实体，而是必须满足问题中的属性约束。例如：
 
-推荐使用 conda：
+```text
+Question:
+The 1988 American comedy film, The Great Outdoors, starred a four-time Academy Award nominee,
+who received a star on the Hollywood Walk of Fame in what year?
 
-```bat
+Bridge entity:
+object = person
+attributes =
+  - starred in The Great Outdoors
+  - four-time Academy Award nominee
+next_relation = year received Hollywood Walk of Fame star
+```
+
+只有当候选实体满足这些属性后，它才会成为 confirmed bridge entity，并被用于下一跳推理。
+
+## 方法结构
+
+项目现在包含三套主要组件。
+
+```text
+hotpotqa_agent/
+  agent/          # 原始 Evidence-State baseline agent
+  bridge/         # 属性约束驱动的 bridge reasoning agent
+  comparison/     # 针对 comparison 问题的 agent
+  core/           # 共享的 LLM、检索和状态工具
+  data/           # HotpotQA 数据加载和样本查看工具
+  router.py       # 问题类型判别器
+```
+
+### Bridge Agent
+
+Bridge Agent 用于处理 HotpotQA 中的 bridge 类型问题。它的核心表示是 `BridgeEntitySchema`：
+
+```json
+{
+  "object": "person",
+  "attributes": [
+    {
+      "description": "wife of Ewan MacColl",
+      "status": "unverified",
+      "constraint_type": "hard"
+    }
+  ],
+  "candidate_entities": [],
+  "confirmed_entity": null,
+  "next_relation": "nationality",
+  "state": "schema_created"
+}
+```
+
+状态流如下：
+
+```text
+schema_created
+  -> search
+  -> candidate_found / candidate_not_found
+
+candidate_found
+  -> verify
+  -> verified / verification_failed
+
+verified + next_relation
+  -> write to EvidenceMemory
+  -> build next schema
+
+verified + no next_relation
+  -> finished
+```
+
+如果普通搜索找不到候选实体，会调用 `hidden_search` 寻找隐藏桥接信息，例如别名、艺名、改编来源等：
+
+```text
+James Henry Miller -> Ewan MacColl
+House of Anubis -> Het Huis Anubis
+Catching Fire -> The Hunger Games
+```
+
+如果 `hidden_search` 仍然找不到候选实体，当前样本会直接结束，避免重复调用到最大轮数。
+
+### Comparison Agent
+
+Comparison 类型问题通常不需要复杂桥接链，而是比较两个实体在某个属性上的差异，例如：
+
+```text
+Who was inducted into the Rock and Roll Hall of Fame, David Lee Roth or Cia Berg?
+```
+
+因此项目单独实现了 `hotpotqa_agent/comparison`，用于：
+
+- 抽取被比较实体
+- 抽取比较属性
+- 分别查找两个实体的属性值
+- 根据规则输出答案
+
+### Hybrid Agent
+
+`run_hybrid_agent.py` 和 `evaluate.py` 会先通过 router 判断问题类型：
+
+```text
+bridge -> Bridge Agent
+comparison -> Comparison Agent
+```
+
+如果数据集中已有 `type` 字段，默认优先使用数据集标注；也可以使用 LLM router。
+
+## 环境配置
+
+建议使用 conda：
+
+```bash
 conda create -n hotpot-agent python=3.11 -y
 conda activate hotpot-agent
 pip install -r requirements.txt
 ```
 
-项目需要在根目录创建 `.env` 并配置大模型。
+在项目根目录创建 `.env`：
 
 ```env
 LLM_BASE_URL=https://api.siliconflow.cn/v1
 LLM_API_KEY=your_api_key_here
-LLM_MODEL=deepseek-ai/DeepSeek-V3
+LLM_MODEL=deepseek-ai/DeepSeek-V3.2
 LLM_TEMPERATURE=0.2
 LLM_MAX_TOKENS=1024
 ```
+
+当前实验中推荐使用：
+
+```env
+LLM_MODEL=deepseek-ai/DeepSeek-V3.2
+```
+
+原因是该模型在本项目的多轮 JSON 输出、schema planning、candidate extraction 和 verification 中较稳定，速度和准确率也比较均衡。
 
 ## 查看 HotpotQA 样本
 
@@ -81,192 +174,113 @@ LLM_MAX_TOKENS=1024
 python -m hotpotqa_agent.data.explore_dataset --split validation --sample-index 0 --sample-count 1
 ```
 
-如果你已经缓存了数据集，可以加：
-
-```bash
---hf-cache-dir <drive:>/hf_cache/hotpotqa --offline
-```
-
-## 导出问题和标准证据
+导出问题和 supporting facts：
 
 ```bash
 python -m hotpotqa_agent.data.export_evidence --split train --sample-index 0 --sample-count 100 --output outputs/hotpot_train_evidence_100.md
 ```
 
-## 运行 Agent 示例
+## 运行示例
 
-### 1-hop Example
-
-```bash
-python examples/run_sample_agent.py --split train --sample-index 7 --max-hops 4
-```
-
-```text
-Question:
-Who was once considered the best kick boxer in the world, however he has been involved in a number of controversies relating to his "unsportsmanlike conducts" in the sport and crimes of violence outside of the ring.
-
-Gold answer:
-Badr Hari
-
-Hop 1:
-Action: search {"query": "Badr Hari kick boxer controversies unsportsmanlike conduct crimes"}
-Observation:
-Badr Hari[2] directly states that he was once considered the best kickboxer in the world and was involved in controversies related to unsportsmanlike conduct and violent crimes outside the ring.
-Extracted fact:
-Badr Hari was once considered the best kickboxer in the world and has been involved in controversies relating to unsportsmanlike conduct and crimes of violence.
-
-Final answer:
-Badr Hari
-```
-
-### 2-hop Example
-
-```bash
-python examples/run_sample_agent.py --split train --sample-index 8 --max-hops 4
-```
-
-```text
-Question:
-The Dutch-Belgian television series that "House of Anubis" was based on first aired in what year?
-
-Gold answer:
-2006
-
-Hop 1:
-Action: search {"query": "House of Anubis based on"}
-Observation:
-House of Anubis[0] states that House of Anubis is based on the Dutch-Belgian television series "Het Huis Anubis".
-Extracted fact:
-House of Anubis is based on the Dutch-Belgian series "Het Huis Anubis".
-
-Hop 2:
-Action: lookup_title {"title_query": "Het Huis Anubis"}
-Observation:
-Het Huis Anubis[1] states that the series first aired in September 2006.
-Extracted fact:
-Het Huis Anubis first aired in September 2006.
-
-Final answer:
-2006
-```
-
-Another 2-hop example:
-
-```bash
-python examples/run_sample_agent.py --split train --sample-index 15 --max-hops 4
-```
-
-```text
-Question:
-The 1988 American comedy film, The Great Outdoors, starred a four-time Academy Award nominee, who received a star on the Hollywood Walk of Fame in what year?
-
-Gold answer:
-2006
-
-Hop 1:
-Action: search {"query": "The Great Outdoors 1988 cast four-time Academy Award nominee"}
-Observation:
-The Great Outdoors (film)[1] lists the cast, and Annette Bening[3] states that she is a four-time Academy Award nominee.
-Extracted fact:
-Annette Bening starred in The Great Outdoors and is a four-time Academy Award nominee.
-
-Hop 2:
-Action: search {"query": "Annette Bening Hollywood Walk of Fame star year"}
-Observation:
-Annette Bening[4] states that in 2006, she received a star on the Hollywood Walk of Fame.
-Extracted fact:
-Annette Bening received a star on the Hollywood Walk of Fame in 2006.
-
-Final answer:
-2006
-```
-
-### 3-hop Example
+运行原始 baseline agent：
 
 ```bash
 python examples/run_sample_agent.py --split train --sample-index 3 --max-hops 4
 ```
 
-```text
-Question:
-What nationality was James Henry Miller's wife?
-
-Gold answer:
-American
-
-Hop 1:
-Action: search {"query": "James Henry Miller wife"}
-Observation:
-Ewan MacColl[0] states that James Henry Miller was better known by his stage name Ewan MacColl.
-Extracted fact:
-James Henry Miller is better known by his stage name Ewan MacColl.
-
-Hop 2:
-Action: search {"query": "Ewan MacColl wife"}
-Observation:
-Peggy Seeger[1] states that Peggy Seeger was married to the singer and songwriter Ewan MacColl until his death in 1989.
-Extracted fact:
-Ewan MacColl (James Henry Miller) was married to Peggy Seeger.
-
-Hop 3:
-Action: lookup_title {"title_query": "Peggy Seeger"}
-Observation:
-Peggy Seeger[0] states that Margaret "Peggy" Seeger is an American folksinger.
-Extracted fact:
-Peggy Seeger is an American folksinger.
-
-Final answer:
-American
-```
-
-Another 3-hop example:
+运行 bridge agent：
 
 ```bash
-python examples/run_sample_agent.py --split train --sample-index 16 --max-hops 4
+python examples/run_bridge_agent.py --split train --sample-index 3 --max-rounds 8
 ```
 
-```text
-Question:
-What are the names of the current members of American heavy metal band who wrote the music for Hurt Locker The Musical?
-
-Gold answer:
-Hetfield and Ulrich, longtime lead guitarist Kirk Hammett, and bassist Robert Trujillo.
-
-Agent trace:
-1. search "Hurt Locker The Musical music written by"
-   → Finds that the music for Hurt Locker The Musical was written by Metallica and Stephen R. Schwartz.
-
-2. search "Metallica American heavy metal band current members"
-   → Confirms that Metallica is an American heavy metal band.
-
-3. lookup_title "Metallica"
-   → Finds the current members on the Metallica page: James Hetfield, Lars Ulrich, Kirk Hammett, and Robert Trujillo.
-
-Final answer:
-James Hetfield, Lars Ulrich, Kirk Hammett, and Robert Trujillo
-```
-
-## 评测指标
+运行 comparison agent：
 
 ```bash
-python -m hotpotqa_agent.evaluation.evaluate_agent --split train --sample-index 0 --sample-count 20 --max-hops 4 --hf-cache-dir <drive:>/hf_cache/hotpotqa --offline
+python examples/run_comparison_agent.py --split train --sample-index 36 --max-rounds 4
 ```
 
-以下结果基于 HotpotQA `train` split 的前 20 条样本计算得到，其中包含 18 条 bridge 问题和 2 条 comparison 问题。
+运行 hybrid agent：
 
-| 指标 | 结果 | 含义 |
-|---|---:|---|
-| `count` | 20 | 参与评测的样本数量。 |
-| `answer_em` | 0.6000 | 预测答案与标准答案完全匹配的比例，经过大小写、标点和冠词归一化。 |
-| `answer_f1` | 0.7643 | 预测答案与标准答案之间的 token-level F1。 |
-| `answer_rate` | 0.9500 | Agent 输出非空答案的比例。 |
-| `support_precision` | 0.1853 | Agent 检索到的证据中，有多少比例属于标准 supporting facts。 |
-| `support_recall` | 0.7092 | 标准 supporting facts 中，有多少比例被 Agent 检索到。 |
-| `support_f1` | 0.2823 | Supporting facts 检索的 Precision / Recall 综合 F1。 |
-| `avg_hops` | 1.9000 | Agent 平均推理跳数。 |
+```bash
+python examples/run_hybrid_agent.py --split train --sample-index 20 --max-rounds 8
+```
 
-逐样本评测结果会保存为 JSONL：
+运行后，trace 会写入：
 
 ```text
+outputs/bridge_trace.md
+outputs/comparison_trace.md
+```
+
+## 评测
+
+评测改进后的 hybrid agent：
+
+```bash
+python evaluate.py --split train --sample-index 150 --sample-count 30 --max-rounds 8
+```
+
+评测原始 baseline agent：
+
+```bash
+python -m hotpotqa_agent.evaluation.evaluate_agent --split train --sample-index 150 --sample-count 30 --max-hops 4
+```
+
+逐样本结果会保存到：
+
+```text
+outputs/eval_hybrid.jsonl
 outputs/eval_agent.jsonl
+```
+
+## 评价指标
+
+本项目将指标分为四类。
+
+### Answer Metrics
+
+- `answer_em`: 预测答案与标准答案完全匹配的比例。
+- `answer_f1`: 预测答案与标准答案的 token-level F1。
+- `BLEU`: 生成答案与标准答案之间的 n-gram 相似度。
+- `ROUGE-L`: 基于最长公共子序列的相似度。
+- `METEOR`: 综合词形和词序的生成相似度。
+
+### Evidence Metrics
+
+- `sp_f1` / `support_f1`: supporting facts 的 F1，用于衡量模型是否找到了正确证据。
+
+### Joint Metrics
+
+- `joint_f1`: 同时考虑答案和 supporting facts 的综合 F1。
+
+### Process Metrics
+
+- `rounds`: 平均推理轮数。
+- `candidate_found_rate`: 候选中间实体搜索成功率。
+- `verification_success_rate`: 候选实体验证成功率。
+- `confirmed_chain_length`: 平均确认实体链长度。
+
+## 实验现象
+
+原始 baseline agent 通常在 answer-only 指标上更强，因为它更直接面向最终答案生成。
+
+改进后的 hybrid agent 在部分实验中会牺牲少量 answer EM/F1，但能够显著提升 supporting fact F1 和 joint F1。这说明属性约束和显式验证机制可以增强证据 grounding 和多跳推理链的可解释性。
+
+因此，本项目的核心结论不是简单追求最高答案匹配率，而是探索：
+
+```text
+如何用显式逻辑链连接点，让多跳问答过程更可验证、更可解释。
+```
+
+## Git 注意事项
+
+不要提交 `.env` 和大规模输出文件。建议 `.gitignore` 至少包含：
+
+```text
+.env
+__pycache__/
+*.pyc
+outputs/*.jsonl
+outputs/*.md
 ```

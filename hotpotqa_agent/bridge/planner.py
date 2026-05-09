@@ -31,6 +31,22 @@ Rules:
      attributes = ["starred in Gunmen from Laredo", "narrator of Frontier"]
      next_relation = "full name"
 
+-Preserve the direction of relations from the question. Do not reverse subject and object.
+   When the unknown entity is a slot inside a sentence, write the attribute so the slot remains
+   the candidate.
+   Example:
+   "Cadmium Chloride is slightly soluble in this chemical, it is also called what?"
+   object = "chemical"
+   attributes = ["chemical in which Cadmium Chloride is slightly soluble"]
+   next_relation = "common_name"
+   Do not write attributes = ["slightly soluble in Cadmium Chloride"], because that means the
+   candidate is soluble in Cadmium Chloride.
+
+-For questions with "this/that/which <type>" referring to a missing relation value, make the
+   missing value the candidate entity. Use attributes like:
+   "chemical in which X is soluble", "person whom X was named after",
+   "city where X has its head office", "company that acquired X".
+
 -If the wh-target is an attribute value such as year, nationality, city, state, county, length, album, or network, first build a schema for the entity that owns this attribute, and put the requested attribute in next_relation.
 
 -Use a work title as an attribute constraint when the unknown entity is a person described by a role in that work.

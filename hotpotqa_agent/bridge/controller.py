@@ -14,7 +14,10 @@ class StrategyController:
             return self.tools.search(schema)
 
         if schema.state == BridgeState.CANDIDATE_NOT_FOUND:
-            return self.tools.hidden_search(schema)
+            schema = self.tools.hidden_search(schema)
+            if schema.state == BridgeState.CANDIDATE_NOT_FOUND:
+                schema.state = BridgeState.FINISHED
+            return schema
 
         if schema.state == BridgeState.CANDIDATE_FOUND:
             schema = self.tools.verify(schema)
@@ -41,7 +44,10 @@ class StrategyController:
                     return schema
                 return self.tools.search(schema)
             if not schema.hard_attribute_texts():
-                return self.tools.hidden_search(schema)
+                schema = self.tools.hidden_search(schema)
+                if schema.state == BridgeState.CANDIDATE_NOT_FOUND:
+                    schema.state = BridgeState.FINISHED
+                return schema
             return self.tools.search(schema)
 
         return schema

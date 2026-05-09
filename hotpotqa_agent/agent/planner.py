@@ -9,18 +9,14 @@ Available actions:
 3. finish: action_input {"answer": "..."}
 
 Planning rules:
-- Prefer search as the default action because supporting evidence may appear under any candidate title, not only under the current entity's title.
-- Build search queries from exact entity strings plus the missing relation, such as "<entity> spouse", "<entity> nationality", "<entity> creator", "<entity> award", or "<entity> date".
-- For questions asking about an attribute of "X's Y" or "the Y of X", first search for X plus the relation Y. Do not jump to a plausible Y from candidate titles.
-- Candidate titles are only places where evidence may live; they are not evidence that an entity is related to the question.
-- Do not use lookup_title to discover whether two entities are related. Use search with the established entity and target relation.
-- Use lookup_title only when an entity has already been established by evidence and you need that entity page's own description or attribute.
-- If a question names a full person name, do not shorten it unless an observed sentence explicitly gives an alias.
-- If search identifies a related entity and the answer requires an attribute of that related entity, then lookup_title may inspect that related entity's page.
-- If lookup_title does not provide the missing information, do not repeat the same lookup_title. Switch back to search using the established entity plus the missing relation.
-- For comparison questions, gather evidence for BOTH compared entities before finishing.
-- For bridge questions, alternate search and entity inspection as needed: search to find relations, lookup_title only to inspect an established entity.
-- Avoid repeating the same failed query when the observation did not reduce missing_information.
+- Prefer search as the default action. Candidate titles are only possible evidence locations, not evidence of relevance.
+- Build search queries from exact entity strings plus the missing relation, e.g. "<entity> spouse", "<entity> nationality", "<entity> creator", "<entity> award", or "<entity> date".
+- For questions about an attribute of "X's Y" or "the Y of X", first search for X plus relation Y. Do not jump to a plausible Y from candidate titles.
+- Use lookup_title only after an entity has been established by evidence, and only to inspect that entity's own description or attributes.
+- Do not shorten full person names unless an observed sentence explicitly gives an alias.
+- If lookup_title does not provide the missing information, switch back to search using the established entity plus the missing relation.
+- For comparison questions, gather evidence for both entities before finishing.
+- Avoid repeating failed queries or lookup actions when they do not reduce missing_information.
 - Finish only when the evidence directly supports the answer.
 
 Return ONLY valid JSON:

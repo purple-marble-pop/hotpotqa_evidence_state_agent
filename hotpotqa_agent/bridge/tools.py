@@ -49,8 +49,25 @@ General rules:
 - If the schema object says "answer value for relation", extract the requested relation value
   from evidence. Do not return the source/intermediate entity itself unless that entity is
   explicitly the requested value.
+- Preserve relation direction. If the schema attribute describes a missing slot, extract the
+  entity/value that fills that slot from evidence.
+  Examples:
+  - Attribute "chemical in which Cadmium Chloride is slightly soluble" and evidence
+    "Cadmium chloride is slightly soluble in alcohol" => candidate_entity = "alcohol".
+  - Attribute "person whom Milhouse was named after" and evidence
+    "Milhouse was named after President Richard Nixon's middle name" =>
+    candidate_entity = "President Richard Nixon".
+  - Attribute "city where The Oberoi Group has its head office" and evidence
+    "The Oberoi Group has its head office in Delhi" => candidate_entity = "Delhi".
+- For attributes containing "in which", "whom", "where", "that", or "called", prefer the
+  relation filler stated in evidence over the page title or the source entity.
 - Do not choose a candidate merely because it appears in a page title or shares words with the query.
 - Page titles may identify the entity described by the sentence, including pronouns or descriptions in that page.
+  If an evidence item is "Peggy Seeger[1]: She ... was married to ... Ewan MacColl",
+  then the candidate person satisfying "wife of Ewan MacColl" is "Peggy Seeger".
+  If an evidence item is "Cadmium chloride[1]: It is ... slightly soluble in alcohol",
+  then the candidate chemical satisfying "chemical in which Cadmium Chloride is slightly soluble"
+  is "alcohol", not the page title.
 - Prefer candidates supported by more schema attributes.
 - If different evidence sentences support different attributes, you may combine them when they refer to the same candidate.
 - It is acceptable if not all attributes are proven at this stage; note uncertainty in the reason.
@@ -140,10 +157,22 @@ class AttributeBridgeTools:
         all_attrs = self._attribute_texts(schema)
 
         evidence_by_ref = {}
+        if schema.object.startswith("answer value for relation:"):
+            for attr in all_attrs:
+                entity = self._entity_from_relation_attribute(attr)
+                if entity:
+                    for item in self.search_tool.lookup_title(entity, top_k=self.top_k):
+                        evidence_by_ref[item.ref] = item
         for attr in hard_attrs or all_attrs:
             for item in self.search_tool.search(attr, top_k=self.top_k):
                 evidence_by_ref[item.ref] = item
         return list(evidence_by_ref.values())
+
+    def _entity_from_relation_attribute(self, attribute: str) -> str:
+        for marker in (" of ", " for ", " by ", " in ", " at "):
+            if marker in attribute:
+                return attribute.rsplit(marker, 1)[1].strip()
+        return ""
 
     def _search_candidate_attribute_evidence(
         self, candidate_name: str, attributes: List[str]
@@ -153,6 +182,11 @@ class AttributeBridgeTools:
 
         for attr in attributes:
             query = " ".join([candidate_name, attr]).strip()
+            for item in self.search_tool.lookup_title(candidate_name, top_k=self.top_k):
+                if item.ref in seen_refs:
+                    continue
+                seen_refs.add(item.ref)
+                evidence.append(item)
             for item in self.search_tool.search(query, top_k=self.top_k):
                 if item.ref in seen_refs:
                     continue
@@ -210,7 +244,7 @@ class AttributeBridgeTools:
         ]
         query = " ".join([schema.object] + self._attribute_texts(schema) + hidden_terms)
         evidence = self.search_tool.search(query, top_k=self.top_k)
-        schema.hidden_bridge_notes = [item.sentence for item in evidence]
+        schema.hidden_bridge_notes = [f"{item.ref}: {item.sentence}" for item in evidence]
         schema.candidate_entities = []
 
         if evidence and self.llm.enabled:
@@ -292,7 +326,7 @@ class AttributeBridgeTools:
             else:
                 attr.mark_failed()
 
-        if bool(result.get("verified")) and schema.all_hard_attributes_verified():
+        if schema.all_hard_attributes_verified():
             confirmed_name = candidate.name
             if schema.next_relation:
                 confirmed_name = str(result.get("confirmed_entity") or candidate.name)
